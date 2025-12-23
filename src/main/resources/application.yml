@@ -75,7 +75,7 @@ resilience4j:
 
 logging:
   level:
-    org.example.order.infrastructure.integration.inventory: DEBUG
+    com.hengline.ddd.infrastructure.integration.inventory: DEBUG
     org.apache.kafka: info
     org.springframework.kafka: warn
 
