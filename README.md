@@ -17,7 +17,7 @@
 
 - **实体(Entity)**: 具有唯一标识且其状态会随时间变化的对象
 - **值对象(Value Object)**: 没有唯一标识、不可变的对象，用于描述事物的某种特性
-- **聚合(Aggregate)**: 一组相关实体和值对象的集合，有一个根实体(聚合根)
+- **聚合根(Aggregate)**: 一组相关实体和值对象的集合，有一个根实体(聚合根)
 - **领域服务(Domain Service)**: 封装不属于特定实体或值对象的领域逻辑
 - **领域事件(Domain Event)**: 领域中发生的重要事件
 - **仓储(Repository)**: 提供对聚合根的持久化和检索能力
@@ -28,8 +28,7 @@
 本项目采用典型的DDD分层架构，将业务逻辑、领域模型与技术实现清晰分离。整体结构如下：
 
 ```
-src/main/java/org/example/order/
-├── OrderApplication.java      # 应用入口
+com/hengline/ddd/
 ├── application/               # 应用层
 │   ├── dto/                   # 数据传输对象
 │   └── service/               # 应用服务
@@ -207,11 +206,8 @@ public enum OrderEventEnum {
 ```
 
 状态流转图：
-```
-WAIT_PAYMENT →(PAYED)→ WAIT_DELIVER →(DELIVERY)→ WAIT_RECEIVE →(RECEIVED)→ FINISH
-         ↓(CANCELLED)                                  ↓(CANCELLED)
-         └───────────────────────────────────────────────┘
-```
+
+![pengline-mermaid-flowchart-1766472600730](./imgs/pengline-mermaid-flowchart-1766472600730.png)
 
 ## 4. 核心业务流程
 
