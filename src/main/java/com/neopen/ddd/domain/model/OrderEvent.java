@@ -6,6 +6,7 @@ package com.neopen.ddd.domain.model;
  * @author <a href="mailto:<EMAIL>">pleuvoir</a>
  */
 public enum OrderEvent {
+    CREATE,         // 创建订单
     PAY,            // 支付成功
     CANCEL,         // 取消订单
     SHIP,           // 发货

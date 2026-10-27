@@ -1,11 +1,11 @@
 package com.neopen.ddd.infrastructure.integration.payment.acl;
 
+import com.neopen.ddd.domain.model.Order;
 import com.neopen.ddd.infrastructure.integration.payment.PaymentClient;
 import com.neopen.ddd.infrastructure.integration.payment.dto.PaymentRequestDTO;
 import com.neopen.ddd.infrastructure.integration.payment.dto.PaymentResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import com.neopen.ddd.domain.model.Order;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -28,7 +28,7 @@ public class PaymentServiceAcl {
 
         } catch (Exception e) {
             // 记录异常日志
-            log.error("支付服务调用失败: " + e.getMessage());
+            log.error("支付服务调用失败: {}", e.getMessage());
             return false;
         }
     }

@@ -1,10 +1,13 @@
 package com.neopen.ddd.interfaces.web;
 
+import cn.hutool.core.util.RandomUtil;
 import jakarta.validation.Valid;
 import com.neopen.ddd.application.dto.OrderCreateCommand;
 import com.neopen.ddd.application.service.OrderApplicationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -24,10 +27,22 @@ public class OrderController {
         return orderService.createOrder(command);
     }
 
+    @GetMapping
+    public Long createOrder() {
+        OrderCreateCommand command = new OrderCreateCommand();
+        command.setCustomerId(RandomUtil.randomLong(1, 100));
+        command.setProductId(RandomUtil.randomLong(1, 100));
+        command.setProductName("Product " + RandomUtil.randomString(5));
+        command.setQuantity(RandomUtil.randomInt(1, 10));
+        command.setPrice(RandomUtil.randomBigDecimal(BigDecimal.valueOf(0.01), BigDecimal.valueOf(100)));
+
+        return orderService.createOrder(command);
+    }
+
     /**
      * 模拟支付
      */
-    @PostMapping("/{id}/pay")
+    @GetMapping("/{id}/pay")
     public String payOrder(@PathVariable("id") Long id) {
         return orderService.payOrder(id);
     }
@@ -35,7 +50,7 @@ public class OrderController {
     /**
      * 模拟发货
      */
-    @PostMapping("/{id}/ship")
+    @GetMapping("/{id}/ship")
     public String shipOrder(@PathVariable("id") Long id) {
         return orderService.shipOrder(id);
     }
@@ -43,7 +58,7 @@ public class OrderController {
     /**
      * 模拟收货
      */
-    @PostMapping("/{id}/receive")
+    @GetMapping("/{id}/receive")
     public String receiveOrder(@PathVariable("id") Long id) {
         return orderService.receiveOrder(id);
     }
@@ -51,32 +66,32 @@ public class OrderController {
     /**
      * 模拟取消
      */
-    @PostMapping("/{id}/cancel")
+    @GetMapping("/{id}/cancel")
     public String cancelOrder(@PathVariable("id") Long id) {
         return orderService.cancelOrder(id);
     }
 
-    @PostMapping("/{id}/complete")
+    @GetMapping("/{id}/complete")
     public String completeOrder(@PathVariable("id") Long id) {
         return orderService.completeOrder(id);
     }
 
-    @PostMapping("/{id}/refund")
+    @GetMapping("/{id}/refund")
     public String refundOrder(@PathVariable("id") Long id) {
         return orderService.refundOrder(id);
     }
 
-    @PostMapping("/{id}/refund/succeeded")
+    @GetMapping("/{id}/refund/succeeded")
     public String refundSucceeded(@PathVariable("id") Long id) {
         return orderService.refundSucceeded(id);
     }
 
-    @PostMapping("/{id}/refund/failed")
+    @GetMapping("/{id}/refund/failed")
     public String refundFailed(@PathVariable("id") Long id) {
         return orderService.refundFailed(id);
     }
 
-    @PostMapping("/{id}/close")
+    @GetMapping("/{id}/close")
     public String closeOrder(@PathVariable("id") Long id) {
         return orderService.closeOrder(id);
     }

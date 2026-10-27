@@ -3,6 +3,7 @@ package com.neopen.ddd.application.service;
 import com.neopen.ddd.application.dto.OrderCreateCommand;
 import com.neopen.ddd.domain.model.*;
 import com.neopen.ddd.domain.repository.OrderRepository;
+import com.neopen.ddd.domain.repository.OrderStatusHistoryRepository;
 import com.neopen.ddd.domain.statemachine.OrderStateMachineService;
 import com.neopen.ddd.infrastructure.integration.inventory.acl.InventoryServiceAcl;
 import com.neopen.ddd.infrastructure.integration.payment.acl.PaymentServiceAcl;
@@ -15,15 +16,17 @@ import java.util.Arrays;
 public class OrderApplicationService {
 
     private final OrderRepository orderRepository;
+    private final OrderStatusHistoryRepository historyRepository;
     private final InventoryServiceAcl inventoryAcl;
     private final PaymentServiceAcl paymentServiceAcl;
     private final OrderStateMachineService orderStateMachineService;
 
-    public OrderApplicationService(OrderRepository orderRepository,
+    public OrderApplicationService(OrderRepository orderRepository, OrderStatusHistoryRepository historyRepository,
                                    InventoryServiceAcl inventoryAcl,
                                    PaymentServiceAcl paymentServiceAcl,
                                    OrderStateMachineService orderStateMachineService) {
         this.orderRepository = orderRepository;
+        this.historyRepository = historyRepository;
         this.inventoryAcl = inventoryAcl;
         this.paymentServiceAcl = paymentServiceAcl;
         this.orderStateMachineService = orderStateMachineService;
@@ -31,9 +34,16 @@ public class OrderApplicationService {
 
     /**
      * 创建订单
+     * TODO 此处涉及多服务调用，要考虑分布式事务
+     *
+     * 库存与订单一致性：库存预占和数据库事务不属于同一个事务，需要补偿机制或 Saga。
      */
     @Transactional
     public Long createOrder(OrderCreateCommand command) {
+        if (command.getCustomerId() == null) {
+            throw new IllegalArgumentException("客户ID不能为空");
+        }
+
         // 先在本地校验并构建聚合，避免明显非法的订单导致库存被预占。
         Order order = Order.create(command.getCustomerId(), Arrays.asList(
                 ProductItem.create(command.getProductId(), command.getProductName(), command.getQuantity(),
@@ -46,11 +56,17 @@ public class OrderApplicationService {
         // 注意：库存预占与本地数据库不是同一个事务；生产环境应补偿释放或使用 Saga/Outbox。
         orderRepository.save(order);
 
+        //        状态记录
+        historyRepository.save(OrderStatusHistory.of(order, OrderEvent.CREATE, "创建订单"));
+
         return order.getId();
     }
 
     /**
      * 订单支付
+     * TODO: 此处涉及多服务调用，要考虑分布式事务。 以及支付相关处理
+     *
+     * 支付与订单一致性：支付渠道成功后，数据库提交仍可能失败，需要支付幂等和异常补偿。
      */
     @Transactional
     public String payOrder(Long orderId) {
@@ -138,35 +154,45 @@ public class OrderApplicationService {
         return "取消成功，订单号：" + order.getOrderNum();
     }
 
-    /** 确认订单完成（签收后）。 */
+    /**
+     * 确认订单完成（签收后）。
+     */
     @Transactional
     public String completeOrder(Long orderId) {
         orderStateMachineService.fire(orderId, OrderEvent.COMPLETE);
         return "订单已完成，订单ID：" + orderId;
     }
 
-    /** 申请退款。真正的退款渠道调用应在退款流程中异步处理并保证幂等。 */
+    /**
+     * 申请退款。真正的退款渠道调用应在退款流程中异步处理并保证幂等。
+     */
     @Transactional
     public String refundOrder(Long orderId) {
         orderStateMachineService.fire(orderId, OrderEvent.REFUND);
         return "退款申请已受理，订单ID：" + orderId;
     }
 
-    /** 记录退款渠道成功回执。 */
+    /**
+     * 记录退款渠道成功回执。
+     */
     @Transactional
     public String refundSucceeded(Long orderId) {
         orderStateMachineService.fire(orderId, OrderEvent.REFUND_SUCCESS);
         return "退款已完成，订单ID：" + orderId;
     }
 
-    /** 记录退款渠道失败回执，并由状态机恢复退款前状态。 */
+    /**
+     * 记录退款渠道失败回执，并由状态机恢复退款前状态。
+     */
     @Transactional
     public String refundFailed(Long orderId) {
         orderStateMachineService.fire(orderId, OrderEvent.REFUND_FAILED);
         return "退款失败，订单已恢复原状态，订单ID：" + orderId;
     }
 
-    /** 关闭待支付或已支付订单；已支付订单的资金撤销应先完成。 */
+    /**
+     * 关闭待支付或已支付订单；已支付订单的资金撤销应先完成。
+     */
     @Transactional
     public String closeOrder(Long orderId) {
         Order order = orderRepository.findById(orderId)

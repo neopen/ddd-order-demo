@@ -1,5 +1,6 @@
 package com.neopen.ddd.domain.model;
 
+import cn.hutool.core.util.RandomUtil;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -47,7 +48,7 @@ public class Order {
      * 退款前状态，用于退款失败后恢复。
      */
     @Enumerated(EnumType.STRING)
-    @Column(name = "pre_status", length = 32)
+    @Column(name = "pre_status", length = 32, nullable = false)
     private OrderStatus preStatus;
 
     @Column(
@@ -75,6 +76,10 @@ public class Order {
     @JoinColumn(name = "payment_id", unique = true)
     private OrderPayment orderPayment;
 
+
+    @Column(name = "operator_id")
+    private Long operatorId;
+
     /**
      * JPA 乐观锁版本号。
      */
@@ -86,22 +91,18 @@ public class Order {
     public static Order create(
             Long customerId,
             List<ProductItem> items) {
-
-        if (customerId == null) {
-            throw new IllegalArgumentException("客户ID不能为空");
-        }
-
         if (items == null || items.isEmpty()) {
             throw new IllegalArgumentException("订单项不能为空");
         }
-
         Order order = new Order();
         // id 由数据库生成，不要手动赋值。
         order.orderNum = generateOrderNumber();
         order.customerId = customerId;
         order.status = OrderStatus.CREATED;
+        order.preStatus = OrderStatus.CREATED;
         order.createdAt = LocalDateTime.now();
         order.updatedAt = order.createdAt;
+        order.operatorId = RandomUtil.randomLong();
 
         for (ProductItem item : items) {
             order.addOrderItem(item);

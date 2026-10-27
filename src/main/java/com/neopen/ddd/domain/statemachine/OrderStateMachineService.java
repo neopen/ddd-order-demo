@@ -4,7 +4,9 @@ import com.neopen.ddd.domain.event.OrderStatusChangedEvent;
 import com.neopen.ddd.domain.model.Order;
 import com.neopen.ddd.domain.model.OrderEvent;
 import com.neopen.ddd.domain.model.OrderStatus;
+import com.neopen.ddd.domain.model.OrderStatusHistory;
 import com.neopen.ddd.domain.repository.OrderRepository;
+import com.neopen.ddd.domain.repository.OrderStatusHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -21,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderStateMachineService {
 
     private final OrderRepository orderRepo;
+    private final OrderStatusHistoryRepository historyRepository;
     private final ApplicationEventPublisher publisher;
     private final OrderStateMachineManager stateMachineManager;
 
@@ -50,9 +53,13 @@ public class OrderStateMachineService {
         // 触发 JPA @Version 乐观锁检查；失败时事务回滚。
         orderRepo.saveAndFlush(order);
 
+//        状态记录
+        historyRepository.save(OrderStatusHistory.of(order, event, "订单状态流转"));
+
         // 监听器应使用 @TransactionalEventListener(AFTER_COMMIT)，避免提交前执行副作用。
         publisher.publishEvent(new OrderStatusChangedEvent(orderId, from, target, event));
         log.info("订单状态迁移成功，orderId={}, {} --{}--> {}", orderId, from, event, target);
         return true;
     }
+
 }
