@@ -44,7 +44,7 @@ public class OrderController {
      * 模拟收货
      */
     @PostMapping("/{id}/receive")
-    public String reOrder(@PathVariable("id") Long id) {
+    public String receiveOrder(@PathVariable("id") Long id) {
         return orderService.receiveOrder(id);
     }
 
@@ -54,6 +54,31 @@ public class OrderController {
     @PostMapping("/{id}/cancel")
     public String cancelOrder(@PathVariable("id") Long id) {
         return orderService.cancelOrder(id);
+    }
+
+    @PostMapping("/{id}/complete")
+    public String completeOrder(@PathVariable("id") Long id) {
+        return orderService.completeOrder(id);
+    }
+
+    @PostMapping("/{id}/refund")
+    public String refundOrder(@PathVariable("id") Long id) {
+        return orderService.refundOrder(id);
+    }
+
+    @PostMapping("/{id}/refund/succeeded")
+    public String refundSucceeded(@PathVariable("id") Long id) {
+        return orderService.refundSucceeded(id);
+    }
+
+    @PostMapping("/{id}/refund/failed")
+    public String refundFailed(@PathVariable("id") Long id) {
+        return orderService.refundFailed(id);
+    }
+
+    @PostMapping("/{id}/close")
+    public String closeOrder(@PathVariable("id") Long id) {
+        return orderService.closeOrder(id);
     }
 
     @GetMapping("/{id}/status")

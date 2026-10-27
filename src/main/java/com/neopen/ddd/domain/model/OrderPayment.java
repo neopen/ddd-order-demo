@@ -1,7 +1,10 @@
 package com.neopen.ddd.domain.model;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 
@@ -9,7 +12,6 @@ import java.time.LocalDateTime;
 @Table(name = "tab_order_payment")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Data
 public class OrderPayment {
 
     @Id
@@ -22,7 +24,8 @@ public class OrderPayment {
     private LocalDateTime paidAt;
     private Double amount;
 
-    @OneToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    @Setter
+    @OneToOne(mappedBy = "orderPayment", fetch = FetchType.LAZY)
     private Order order;
 
     public OrderPayment(String paymentId, String transactionId, String status, Order order) {

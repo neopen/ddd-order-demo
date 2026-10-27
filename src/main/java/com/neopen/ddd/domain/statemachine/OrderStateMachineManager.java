@@ -49,46 +49,55 @@ public class OrderStateMachineManager {
         StateMachine<OrderStatus, OrderEvent> machine =
                 stateMachineFactory.getStateMachine("order-" + order.getId());
 
-        try {
-            // 每次调用都从当前订单状态恢复，避免依赖状态机上一次运行的状态。
-            persister.restore(machine, order);
-            machine.start();
-
-            Message<OrderEvent> message = MessageBuilder
-                    .withPayload(event)
-                    .setHeader(ORDER_HEADER, order)
-                    .setHeader(ORDER_ID_HEADER, order.getId())
-                    .build();
-
-            boolean accepted = machine.sendEvent(message);
-            if (!accepted) {
-                throw new IllegalStateException(
-                        "状态机拒绝订单事件: orderId=" + order.getId()
-                                + ", currentStatus=" + order.getStatus()
-                                + ", event=" + event);
-            }
-
-            if (machine.getState() == null || machine.getState().getId() == null) {
-                throw new IllegalStateException(
-                        "状态机处理后未能获取目标状态，orderId=" + order.getId());
-            }
-
-            OrderStatus target = machine.getState().getId();
-            log.debug("订单状态机迁移完成，orderId={}, event={}, target={}",
-                    order.getId(), event, target);
-            return target;
-        } catch (Exception ex) {
-            if (ex instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            throw new IllegalStateException(
-                    "订单状态机执行失败: orderId=" + order.getId() + ", event=" + event,
-                    ex);
-        } finally {
+        // 工厂可能按 machineId 返回同一个实例；同一 JVM 内对该实例串行执行。
+        synchronized (machine) {
             try {
-                machine.stop();
-            } catch (Exception stopError) {
-                log.warn("停止订单状态机失败，orderId={}", order.getId(), stopError);
+                // 1. 先启动状态机
+                machine.start();
+
+                // 2. 再恢复订单在数据库中的实际状态
+                persister.restore(machine, order);
+
+                // 3. 使用当前订单状态处理事件
+                Message<OrderEvent> message = MessageBuilder
+                        .withPayload(event)
+                        .setHeader(ORDER_HEADER, order)
+                        .setHeader(ORDER_ID_HEADER, order.getId())
+                        .build();
+
+                boolean accepted = machine.sendEvent(message);
+
+                if (!accepted) {
+                    throw new IllegalStateException(
+                            "状态机拒绝订单事件: orderId=" + order.getId()
+                                    + ", currentStatus=" + order.getStatus()
+                                    + ", event=" + event);
+                }
+
+                if (machine.getState() == null
+                        || machine.getState().getId() == null) {
+                    throw new IllegalStateException(
+                            "状态机处理后未能获取目标状态，orderId=" + order.getId());
+                }
+
+                return machine.getState().getId();
+
+            } catch (Exception ex) {
+                if (ex instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+
+                throw new IllegalStateException(
+                        "订单状态机执行失败: orderId=" + order.getId()
+                                + ", event=" + event,
+                        ex);
+            } finally {
+                try {
+                    machine.stop();
+                } catch (Exception stopError) {
+                    log.warn("停止订单状态机失败，orderId={}",
+                            order.getId(), stopError);
+                }
             }
         }
     }

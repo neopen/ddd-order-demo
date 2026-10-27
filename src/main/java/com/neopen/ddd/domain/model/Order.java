@@ -1,9 +1,5 @@
 package com.neopen.ddd.domain.model;
 
-import com.neopen.ddd.domain.event.DomainEvent;
-import com.neopen.ddd.domain.event.OrderCancelledEvent;
-import com.neopen.ddd.domain.event.OrderPaidEvent;
-import com.neopen.ddd.domain.event.OrderShippedEvent;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -84,13 +80,6 @@ public class Order {
      */
     @Version
     private Long version;
-
-    /**
-     * 当前订单实例的领域事件，不同订单互不共享。
-     * transient 字段不参与 JPA 持久化。
-     */
-    @Transient
-    private transient List<DomainEvent> events = new ArrayList<>();
 
     // ==================== 创建订单 ====================
 
@@ -179,134 +168,22 @@ public class Order {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    // ==================== 支付 ====================
+    // ==================== 支付信息 ====================
 
     /**
-     * 支付成功：CREATED -> PAID
-     * <p>
-     * 应在支付结果已被可信渠道确认后调用。
+     * 记录已由支付渠道确认的支付结果，不改变订单状态。
+     * 订单状态迁移仍必须通过状态机应用服务完成。
      */
-    public void pay(OrderPayment paymentInfo) {
-        requireStatus(OrderStatus.CREATED, "只有待支付订单才能支付");
-        if(paymentInfo == null) {
-            return;
+    public void recordPayment(OrderPayment paymentInfo) {
+        if (status != OrderStatus.CREATED) {
+            throw new IllegalStateException("只有待支付订单才能记录支付信息，当前状态：" + status);
         }
-
-        this.status = OrderStatus.PAID;
+        Objects.requireNonNull(paymentInfo, "支付信息不能为空");
+        if (this.orderPayment != null) {
+            throw new IllegalStateException("订单已存在支付记录");
+        }
         this.orderPayment = paymentInfo;
-        touch();
-
-        registerEvent(
-                new OrderPaidEvent(
-                        id,
-                        new Money(totalAmount, "CNY")
-                )
-        );
-    }
-
-    // ==================== 发货与签收 ====================
-
-    /**
-     * 发货：PAID -> SHIPPED
-     */
-    public void ship() {
-        requireStatus(OrderStatus.PAID, "只有已支付订单才能发货");
-
-        this.status = OrderStatus.SHIPPED;
-        touch();
-
-        registerEvent(new OrderShippedEvent(id));
-    }
-
-    /**
-     * 签收：SHIPPED -> DELIVERED
-     */
-    public void sign() {
-        requireStatus(OrderStatus.SHIPPED, "只有已发货订单才能签收");
-
-        this.status = OrderStatus.DELIVERED;
-        touch();
-    }
-
-    /**
-     * 完成：DELIVERED -> COMPLETED
-     */
-    public void complete() {
-        requireStatus(OrderStatus.DELIVERED, "只有已签收订单才能完成");
-
-        this.status = OrderStatus.COMPLETED;
-        touch();
-    }
-
-    // ==================== 取消订单 ====================
-
-    /**
-     * 取消待支付订单：CREATED -> CANCELLED。
-     * <p>
-     * 已支付订单涉及资金处理，不在此方法中直接取消。
-     */
-    public void cancel() {
-        requireStatus(
-                OrderStatus.CREATED,
-                "只有待支付订单才能直接取消"
-        );
-
-        this.status = OrderStatus.CANCELLED;
-        touch();
-
-        registerEvent(new OrderCancelledEvent(id, customerId));
-    }
-
-    // ==================== 退款 ====================
-
-    /**
-     * 发起退款：PAID / SHIPPED / DELIVERED -> REFUNDING。
-     */
-    public void startRefund() {
-        if (status != OrderStatus.PAID
-                && status != OrderStatus.SHIPPED
-                && status != OrderStatus.DELIVERED) {
-            throw new IllegalStateException(
-                    "当前状态不允许退款：" + status
-            );
-        }
-
-        this.preStatus = this.status;
-        this.status = OrderStatus.REFUNDING;
-        touch();
-    }
-
-    /**
-     * 退款失败：REFUNDING -> 退款前状态。
-     */
-    public void rollbackRefund() {
-        requireStatus(
-                OrderStatus.REFUNDING,
-                "只有退款中的订单才能恢复"
-        );
-
-        if (preStatus == null) {
-            throw new IllegalStateException(
-                    "退款前状态缺失，无法恢复订单"
-            );
-        }
-
-        this.status = preStatus;
-        this.preStatus = null;
-        touch();
-    }
-
-    /**
-     * 退款成功：REFUNDING -> REFUNDED。
-     */
-    public void markRefunded() {
-        requireStatus(
-                OrderStatus.REFUNDING,
-                "只有退款中的订单才能确认退款"
-        );
-
-        this.status = OrderStatus.REFUNDED;
-        this.preStatus = null;
+        paymentInfo.setOrder(this);
         touch();
     }
 
@@ -344,44 +221,7 @@ public class Order {
         touch();
     }
 
-    // ==================== 领域事件 ====================
-
-    protected void registerEvent(DomainEvent event) {
-        Objects.requireNonNull(event, "领域事件不能为空");
-
-        if (events == null) {
-            events = new ArrayList<>();
-        }
-
-        events.add(event);
-    }
-
-    public List<DomainEvent> getEvents() {
-        if (events == null) {
-            events = new ArrayList<>();
-        }
-
-        return List.copyOf(events);
-    }
-
-    public void clearEvents() {
-        if (events != null) {
-            events.clear();
-        }
-    }
-
     // ==================== 内部方法 ====================
-
-    private void requireStatus(
-            OrderStatus expected,
-            String message) {
-
-        if (status != expected) {
-            throw new IllegalStateException(
-                    message + "，当前状态：" + status
-            );
-        }
-    }
 
     private void touch() {
         this.updatedAt = LocalDateTime.now();
