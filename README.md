@@ -1,319 +1,187 @@
 # DDD订单领域模型示例项目
 
-## 1. 领域驱动设计(DDD)基础概念
+## 1. 项目说明
 
-领域驱动设计(Domain-Driven Design, DDD)是一种软件开发方法论，它强调将软件设计与业务领域紧密结合，通过构建丰富的领域模型来解决复杂的业务问题。以下是DDD的核心概念：
-
-### 1.1 核心概念
-
-- **领域(Domain)**: 业务所涉及的范围和边界
-- **子域(Subdomain)**: 领域内可拆分的更小业务单元
-  - 核心域: 业务的核心竞争力
-  - 支撑域: 必要但非核心的业务能力
-  - 通用域: 可标准化、复用的业务功能
-- **限界上下文(Bounded Context)**: 领域模型的边界，在边界内术语和概念具有明确且一致的含义
-
-### 1.2 领域模型构成
-
-- **实体(Entity)**: 具有唯一标识且其状态会随时间变化的对象
-- **值对象(Value Object)**: 没有唯一标识、不可变的对象，用于描述事物的某种特性
-- **聚合根(Aggregate)**: 一组相关实体和值对象的集合，有一个根实体(聚合根)
-- **领域服务(Domain Service)**: 封装不属于特定实体或值对象的领域逻辑
-- **领域事件(Domain Event)**: 领域中发生的重要事件
-- **仓储(Repository)**: 提供对聚合根的持久化和检索能力
-- **工厂(Factory)**: 负责创建复杂的领域对象
+本项目以订单为核心演示 DDD 分层设计，并使用 Spring StateMachine管理订单状态迁移。接口层接收请求，应用层编排用例，领域层维护订单模型与状态规则，基础设施层负责数据库、消息队列及外部服务集成。
 
 ## 2. 项目结构
 
 本项目采用典型的DDD分层架构，将业务逻辑、领域模型与技术实现清晰分离。整体结构如下：
 
-```
-com/hengline/ddd/
-├── application/               # 应用层
-│   ├── dto/                   # 数据传输对象
-│   └── service/               # 应用服务
-├── domain/                    # 领域层（核心）
-│   ├── event/                 # 领域事件
-│   ├── model/                 # 领域模型（实体、值对象、聚合）
-│   ├── repository/            # 领域仓储接口
-│   ├── service/               # 领域服务
-│   └── statemachine/          # 状态机（管理聚合状态转换）
-├── infrastructure/            # 基础设施层
-│   ├── config/                # 配置类
-│   ├── exception/             # 异常处理
-│   ├── integration/           # 外部系统集成
-│   ├── messaging/             # 消息发布/订阅
-│   └── persistence/           # 仓储实现
-└── interfaces/                # 接口层
-    ├── app/                   # 应用接口
-    └── web/                   # Web接口
-```
+    com/hengline/ddd/
+    ├── application/               # 应用层
+    │   ├── dto/                   # 数据传输对象
+    │   └── service/               # 应用服务
+    ├── domain/                    # 领域层（核心）
+    │   ├── event/                 # 领域事件
+    │   ├── model/                 # 领域模型（实体、值对象、聚合）
+    │   ├── repository/            # 领域仓储接口
+    │   ├── service/               # 领域服务
+    │   └── statemachine/          # 状态机（管理聚合状态转换）
+    ├── infrastructure/            # 基础设施层
+    │   ├── config/                # 配置类
+    │   ├── exception/             # 异常处理
+    │   ├── integration/           # 外部系统集成
+    │   ├── messaging/             # 消息发布/订阅
+    │   └── persistence/           # 仓储实现
+    └── interfaces/                # 接口层
+        ├── app/                   # 应用接口
+        └── web/                   # Web接口
 
 ### 2.1 分层职责
 
-- **领域层(Domain Layer)**: 包含核心业务逻辑和领域规则，是系统的核心
-- **应用层(Application Layer)**: 协调领域对象完成用例，不包含业务规则
-- **基础设施层(Infrastructure Layer)**: 提供技术支持，实现领域层的接口
-- **接口层(Interfaces Layer)**: 处理外部请求，转换为应用层的调用
+-   **interfaces**：接收 HTTP 请求并返回响应。
+-   **application**：编排订单用例、事务和状态变更流程。
+-   **domain**：定义 `Order`、订单项、支付信息、状态机及仓储接口。
+-   **infrastructure**：实现 JPA 持久化、消息发布和支付/库存 ACL。
 
-<img src="./imgs/image-20261027175304808.png" alt="image-20261027175304808" style="zoom:67%;" />
+### 2.2 系统架构图
+
+下图展示接口层、应用层、领域层与基础设施层的依赖关系。业务请求由接口层进入应用层，应用服务协调订单聚合根与状态机；仓储、消息队列和外部支付/库存系统等技术细节由基础设施层实现。
+
+<img src="./imgs/mermaid-diagram%20(1).png" alt="mermaid-diagram (1)" style="zoom:57%;" />
+
+**架构约束：**
+
+-   接口层只负责协议适配、参数转换和调用应用服务，不直接操作数据库或状态机。
+-   应用层负责事务边界和用例编排；领域规则由 `Order`聚合根及状态机共同表达。
+-   状态机用于判断事件是否允许发生及计算目标状态；由应用服务调用聚合根方法更新状态并持久化。
+-   领域层定义仓储和 ACL 抽象，基础设施层提供具体实现。
+-   领域事件应在事务提交后对外发布；若要求数据库与 Kafka可靠一致，建议采用 TransactionalOutbox，而不是只依赖普通事务内发送消息。
 
 ## 3. 订单领域模型设计
 
-### 3.1 聚合根
+### 3.1 聚合根：Order
 
-**Order (订单)**
+`Order`是订单聚合根，负责维护订单状态、订单项和支付信息，并通过领域方法保护业务约束。订单状态的迁移合法性由状态机配置判断；应用服务根据状态机返回的目标状态调用聚合根方法完成变更。
 
-```java
-@Entity
-@Table(name = "tab_order")
-public class Order {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    private String orderNum;
-    private Long customerId;
-    @Enumerated(EnumType.STRING)
-    private OrderStatusEnum status;
-    @Column(name = "total_amount", nullable = false, precision = 10, scale = 2)
-    private BigDecimal totalAmount;
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
-    @Column(name = "updated_at", nullable = false)
-    private LocalDateTime updatedAt;
-    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<ProductItem> productItems = new ArrayList<>();
-    @OneToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL)
-    private OrderPayment orderPayment;
-    // 领域方法...
-}
-```
+### 3.2 相关实体
 
-Order作为订单领域的聚合根，封装了订单的核心业务规则和状态转换逻辑，确保订单数据的一致性和完整性。
+-   `ProductItem`：描述订单中的商品、数量和成交单价。
+-   `OrderPayment`：记录订单对应的支付信息。
 
-### 3.2 实体
+它们属于订单业务模型的一部分，具体关联关系以实体映射代码为准。
 
-**ProductItem (订单项)**
+### 3.3 金额
 
-```java
-@Entity
-@Table(name = "tab_order_items")
-public class ProductItem {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    @Column(name = "product_id", nullable = false)
-    private Long productId;
-    @Column(name = "product_name", nullable = false)
-    private String productName;
-    @Column(name = "quantity", nullable = false)
-    private int quantity;
-    @Column(name = "unit_price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal unitPrice;
-    @Column(name = "subtotal", nullable = false, precision = 10, scale = 2)
-    private BigDecimal subtotal;
-    @ManyToOne(fetch = FetchType.LAZY)
-    private Order order;
-    // 领域方法...
-}
-```
-
-**OrderPayment (订单支付信息)**
-
-```java
-@Entity
-@Table(name = "tab_order_payment")
-public class OrderPayment {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    private String paymentId;
-    private String transactionId;
-    private String status;
-    private LocalDateTime paidAt;
-    private Double amount;
-    @OneToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL)
-    private Order order;
-    // 领域方法...
-}
-```
-
-### 3.3 值对象
-
-**Money (金额)**
-
-```java
-@Getter
-public class Money {
-    private BigDecimal amount;
-    private String currency;
-    
-    public Money(BigDecimal amount, String currency) {
-        if (amount.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalArgumentException("金额不能为负");
-        }
-        this.amount = amount;
-        this.currency = currency;
-    }
-    
-    public Money add(Money other) {
-        if (!this.currency.equals(other.currency)) {
-            throw new IllegalArgumentException("货币不一致");
-        }
-        return new Money(this.amount.add(other.amount), this.currency);
-    }
-    // equals, hashCode 基于 amount 和 currency
-}
-```
-
-Money作为值对象，是不可变的，且通过amount和currency属性进行等价性比较，而不是通过唯一标识。
+金额使用 `BigDecimal` 表示，避免使用浮点数进行金额计算。若项目中的`Money`值对象已被实际业务代码采用，应保持金额与币种的校验集中在该对象内。
 
 ### 3.4 领域事件
 
-项目定义了多个领域事件来捕获订单生命周期中的重要状态变化：
-
-- `OrderCreatedEvent`：订单创建事件
-- `OrderPaidEvent`：订单支付事件
-- `OrderShippedEvent`：订单发货事件
-- `OrderCancelledEvent`：订单取消事件
-
-所有领域事件都实现了`DomainEvent`接口，通过Kafka消息队列发布到系统中。
+订单创建、支付、发货、取消等重要业务动作可以通过领域事件通知其他模块。若事件需要与数据库状态可靠一致地投递到Kafka，应使用 Outbox 等可靠投递机制。
 
 ### 3.5 订单状态流转
 
-订单的状态流转通过`OrderStatusEnum`和`OrderEventEnum`定义：
+状态和事件枚举以项目中的 `OrderStatusEnum`、`OrderEventEnum`为准。状态机负责判断事件是否允许触发迁移；应用服务根据迁移结果更新`Order` 并保存。
 
-```java
-public enum OrderStatusEnum {
-    // 待支付
-    WAIT_PAYMENT,
-    // 待发货
-    WAIT_DELIVER,
-    // 待收货
-    WAIT_RECEIVE,
-    // 完成
-    FINISH
-}
+![mermaid-diagram -state](./imgs/mermaid-diagram%20-state.png)
 
-public enum OrderEventEnum {
-    //支付
-    PAYED,
-    //发货
-    DELIVERY,
-    //收货
-    RECEIVED,
-    //订单取消
-    CANCELLED
-}
+### 3.6 状态与事件对应关系
+
+| 当前状态    | 事件             | 目标状态    | 说明                     |
+| ----------- | ---------------- | ----------- | ------------------------ |
+| `CREATED`   | `PAY`            | `PAID`      | 支付成功                 |
+| `CREATED`   | `CANCEL`         | `CANCELLED` | 未支付取消               |
+| `CREATED`   | `CLOSE`          | `CLOSED`    | 超时或异常关闭           |
+| `PAID`      | `SHIP`           | `SHIPPED`   | 发货                     |
+| `PAID`      | `CANCEL`         | `CANCELLED` | 需明确退款规则           |
+| `PAID`      | `REFUND`         | `REFUNDING` | 申请退款                 |
+| `PAID`      | `CLOSE`          | `CLOSED`    | 需处理支付资金           |
+| `SHIPPED`   | `SIGN`           | `DELIVERED` | 确认签收                 |
+| `SHIPPED`   | `REFUND`         | `REFUNDING` | 发货后退款               |
+| `DELIVERED` | `COMPLETE`       | `COMPLETED` | 订单完成                 |
+| `DELIVERED` | `REFUND`         | `REFUNDING` | 签收后退款               |
+| `REFUNDING` | `REFUND_SUCCESS` | `REFUNDED`  | 退款成功                 |
+| `REFUNDING` | `REFUND_FAILED`  | 原状态      | 退款失败，恢复申请前状态 |
+
+图中仅展示本文列出的核心状态；其他迁移（如已支付订单取消、退款）须以实际状态机配置为准。
+
+### 3.7 状态流转处理时序图
+
+``` mermaid
+sequenceDiagram
+    autonumber
+    actor Client as 调用方
+    participant App as OrderStateMachineService
+    participant Repo as OrderRepository
+    participant Manager as OrderStateMachineManager
+    participant SM as Spring StateMachine
+    participant Aggregate as Order 聚合根
+    participant History as OrderStatusHistoryRepository
+    participant DB as 数据库
+
+    Client->>App: fire(orderId, event)
+    App->>Repo: 查询订单
+    Repo-->>App: Order
+    App->>Manager: 计算目标状态
+    Manager->>SM: 恢复状态并发送事件
+    SM-->>Manager: 迁移结果 / targetStatus
+    Manager-->>App: targetStatus
+    App->>Aggregate: transitTo(targetStatus)
+    App->>Repo: 保存订单
+    App->>History: 保存状态流转历史
+    App->>DB: 同一事务提交
+    App-->>Client: 返回处理结果
 ```
 
-状态流转图：
 
-![pengline-mermaid-flowchart-1766472600730](./imgs/pengline-mermaid-flowchart-1766472600730.png)
 
 ## 4. 核心业务流程
 
 ### 4.1 订单创建流程
 
-```java
-@Transactional
-public Long createOrder(OrderCreateCommand command) {
-    // 1. 调用库存服务预留库存
-    if (!inventoryAcl.reserveStock(command.getProductId(), command.getQuantity())) {
-        throw new RuntimeException("库存不足或服务不可用");
-    }
-    
-    // 2. 通过工厂方法创建订单聚合根
-    Order order = Order.create(command.getCustomerId(), Arrays.asList(
-            ProductItem.create(command.getProductId(), command.getProductName(), command.getQuantity(), 
-                              new Money(new BigDecimal(command.getPrice()), "CNY"))
-            ));
-    
-    // 3. 持久化订单
-    orderRepository.save(order);
-    
-    // 4. 发布领域事件
-    order.getEvents().forEach(eventPublisher::publish);
-    order.clearEvents();
-    
-    return order.getId();
-}
-```
+1.  校验请求并确认商品及数量。
+2.  通过库存 ACL 请求预占库存。
+3.  创建 `Order` 聚合根并保存。
+4.  在可靠的事件发布机制下通知下游。
+
+> 库存服务与订单数据库通常不共享本地事务。生产环境需要通过预占超时、释放库存、重试或
+> Saga 等机制处理失败补偿。
 
 ### 4.2 订单支付流程
 
-```java
-@Transactional
-public String payOrder(Long orderId) {
-    // 1. 查找订单
-    Order order = orderRepository.findById(orderId)
-            .orElseThrow(() -> new RuntimeException("订单不存在"));
-    
-    // 2. 调用支付服务处理支付
-    boolean paymentSuccess = paymentServiceAcl.processPayment(order);
-    if (!paymentSuccess) {
-        throw new RuntimeException("支付失败，请稍后重试");
-    }
-    
-    // 3. 设置支付信息
-    OrderPayment paymentInfo = new OrderPayment(
-            "PAY-" + orderId,
-            "TXN-" + orderId,
-            "COMPLETED", order
-    );
-    
-    order.setOrderPayment(paymentInfo);
-    
-    // 4. 触发状态机转换
-    if (!sendEvent(OrderEventEnum.PAYED, order)) {
-        throw new RuntimeException("支付失败, 状态异常，订单号：" + order.getOrderNum());
-    }
-    
-    // 5. 持久化并发布事件
-    orderRepository.save(order);
-    order.getEvents().forEach(eventPublisher::publish);
-    order.clearEvents();
-    
-    return "支付成功，订单号：" + order.getOrderNum();
-}
-```
+1.  查询订单并校验当前状态。
+2.  调用支付 ACL 发起或查询支付。
+3.  对支付结果进行幂等校验。
+4.  通过状态机校验 `PAYED` 事件，并由应用服务更新订单状态。
+5.  在数据库事务中保存订单和支付信息，再可靠地发布支付成功事件。
+
+支付渠道调用不能依赖数据库事务回滚；应使用支付幂等键、回调验签和异常补偿处理跨系统失败。
 
 ## 5. 技术栈与实现细节
 
 ### 5.1 主要技术栈
 
-- **Spring Boot 3.x**: 应用框架
-- **Spring Data JPA**: 数据访问层
-- **Spring StateMachine**: 状态管理
-- **Spring Kafka**: 消息队列
-- **OpenFeign**: 服务间调用
-- **Resilience4j**: 熔断器
-- **H2 Database**: 内存数据库（示例用）
-- **Lombok**: 减少样板代码
-- **FastJSON2**: JSON序列化/反序列化
+-   Spring Boot 3.x
+-   Spring Data JPA
+-   Spring StateMachine
+-   Spring Kafka
+-   OpenFeign
+-   Resilience4j
+-   H2（示例环境）
+-   Lombok
 
-### 5.2 跨域集成设计
+具体版本以项目构建文件为准。
 
-项目通过防腐层(ACL)模式实现与外部系统的集成，避免外部系统的变化影响核心领域模型：
+### 5.2 外部服务集成
 
-- **PaymentServiceAcl**: 支付服务集成
-- **InventoryServiceAcl**: 库存服务集成
+通过 ACL（防腐层）隔离外部系统协议和领域模型：
 
-每个防腐层内部封装了与外部系统交互的细节，包括请求/响应转换、异常处理和容错机制。
+-   `PaymentServiceAcl`：支付服务适配。
+-   `InventoryServiceAcl`：库存服务适配。
 
-### 5.3 状态管理实现
+ACL 负责请求转换和技术异常适配；幂等、超时、重试及补偿策略需结合实际实现配置。
 
-项目使用Spring StateMachine实现订单状态的流转管理，通过状态机配置和监听器来处理状态转换的逻辑和副作用。这种方式将状态转换逻辑与业务逻辑分离，提高了代码的可维护性。
+### 5.3 状态机职责
 
-## 6. 总结
+状态机只负责判断迁移是否合法并提供目标状态。应用服务在事务中更新`Order`、保存订单状态历史；`OrderStatusListener`
+只处理迁移日志等观测工作，不应再次修改聚合根状态。
 
-本项目是一个完整的DDD实践示例，通过订单领域展示了DDD的核心概念和设计模式。项目的主要特点包括：
+## 6. 一致性与可靠性注意事项
 
-1. **清晰的分层架构**: 严格按照DDD的分层原则组织代码
-2. **丰富的领域模型**: 包含完整的聚合、实体、值对象和领域事件
-3. **封装的业务规则**: 核心业务逻辑封装在领域对象中
-4. **事件驱动设计**: 通过领域事件实现系统解耦
-5. **状态机管理**: 使用状态机管理复杂的状态转换
-6. **防腐层设计**: 有效隔离外部系统的影响
+-   **库存**：订单保存失败时需要释放已预占库存，或通过Saga/补偿任务最终收敛。
+-   **支付**：回调必须验签、幂等；支付成功但订单更新失败时，应支持重试或主动对账。
+-   **消息**：若要求订单事务与 Kafka 事件可靠一致，建议使用 Transactional Outbox。
+-   **退款**：校验回调来源、退款金额和订单状态，防止重复退款及越权操作。
 
-通过这样的设计，系统不仅能够灵活应对业务变化，还保持了代码的高内聚低耦合特性，提高了系统的可维护性和可扩展性。
+这些能力应以项目中的实际实现和测试为准；文档不将尚未实现的生产保障描述为已完成。
