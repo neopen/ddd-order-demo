@@ -56,6 +56,8 @@ com/hengline/ddd/
 - **基础设施层(Infrastructure Layer)**: 提供技术支持，实现领域层的接口
 - **接口层(Interfaces Layer)**: 处理外部请求，转换为应用层的调用
 
+<img src="./imgs/image-20261027175304808.png" alt="image-20261027175304808" style="zoom:67%;" />
+
 ## 3. 订单领域模型设计
 
 ### 3.1 聚合根

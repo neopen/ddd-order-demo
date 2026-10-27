@@ -311,57 +311,35 @@ public class Order {
     // ==================== 状态机同步 ====================
 
     /**
-     * 由订单状态机应用服务在迁移校验成功后调用。
-     * <p>
-     * 注意：不要同时让 Listener 和本方法各自独立修改状态。
+     * 应用状态机已验证的迁移结果。
+     * <p>只有状态机应用服务应调用此方法；合法迁移规则集中定义在 OrderStateMachineConfig。
+     * 这里仅维护聚合内部字段不变量，不再重复维护一份状态迁移表。
      */
-    void transitTo(OrderStatus target) {
+    public void transitTo(OrderStatus target) {
         Objects.requireNonNull(target, "目标状态不能为空");
 
-        if (!isAllowedTransition(this.status, target)) {
-            throw new IllegalStateException(
-                    "非法订单状态迁移：" + this.status + " -> " + target
-            );
-        }
-
         if (target == OrderStatus.REFUNDING) {
+            if (status != OrderStatus.PAID
+                    && status != OrderStatus.SHIPPED
+                    && status != OrderStatus.DELIVERED) {
+                throw new IllegalStateException("当前状态不允许进入退款中：" + status);
+            }
             this.preStatus = this.status;
         } else if (this.status == OrderStatus.REFUNDING
                 && target == preStatus) {
+            if (preStatus == null) {
+                throw new IllegalStateException("退款前状态缺失，无法恢复订单");
+            }
             this.preStatus = null;
         } else if (target == OrderStatus.REFUNDED) {
+            if (status != OrderStatus.REFUNDING) {
+                throw new IllegalStateException("只有退款中的订单才能确认退款");
+            }
             this.preStatus = null;
         }
 
         this.status = target;
         touch();
-    }
-
-    private boolean isAllowedTransition(
-            OrderStatus source,
-            OrderStatus target) {
-
-        return switch (source) {
-            case CREATED -> target == OrderStatus.PAID
-                    || target == OrderStatus.CANCELLED
-                    || target == OrderStatus.CLOSED;
-
-            case PAID -> target == OrderStatus.SHIPPED
-                    || target == OrderStatus.CANCELLED
-                    || target == OrderStatus.REFUNDING
-                    || target == OrderStatus.CLOSED;
-
-            case SHIPPED -> target == OrderStatus.DELIVERED
-                    || target == OrderStatus.REFUNDING;
-
-            case DELIVERED -> target == OrderStatus.COMPLETED
-                    || target == OrderStatus.REFUNDING;
-
-            case REFUNDING -> target == OrderStatus.REFUNDED
-                    || (preStatus != null && target == preStatus);
-
-            case COMPLETED, CANCELLED, REFUNDED, CLOSED -> false;
-        };
     }
 
     // ==================== 领域事件 ====================

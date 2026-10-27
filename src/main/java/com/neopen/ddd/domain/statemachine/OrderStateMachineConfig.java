@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.statemachine.StateMachineContext;
 import org.springframework.statemachine.StateMachinePersist;
-import org.springframework.statemachine.config.EnableStateMachine;
+import org.springframework.statemachine.config.EnableStateMachineFactory;
 import org.springframework.statemachine.config.EnumStateMachineConfigurerAdapter;
 import org.springframework.statemachine.config.builders.StateMachineStateConfigurer;
 import org.springframework.statemachine.config.builders.StateMachineTransitionConfigurer;
@@ -18,7 +18,7 @@ import org.springframework.statemachine.support.DefaultStateMachineContext;
 import java.util.EnumSet;
 
 @Configuration
-@EnableStateMachine(name = "orderStateMachine")
+@EnableStateMachineFactory(name = "orderStateMachineFactory")
 @Slf4j
 public class OrderStateMachineConfig extends EnumStateMachineConfigurerAdapter<OrderStatus, OrderEvent> {
 
@@ -148,13 +148,13 @@ public class OrderStateMachineConfig extends EnumStateMachineConfigurerAdapter<O
 
                     @Override
                     public void write(
-                            StateMachineContext<OrderStatus, OrderEvent> context, Order order) throws Exception {
+                            StateMachineContext<OrderStatus, OrderEvent> context, Order order) {
 
                         log.debug("write order status:{}", context.getState());
                     }
 
                     @Override
-                    public StateMachineContext<OrderStatus, OrderEvent> read(Order order) throws Exception {
+                    public StateMachineContext<OrderStatus, OrderEvent> read(Order order) {
 
                         return new DefaultStateMachineContext<>(
                                 order.getStatus(),
