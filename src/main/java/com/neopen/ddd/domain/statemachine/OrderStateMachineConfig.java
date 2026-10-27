@@ -14,6 +14,7 @@ import org.springframework.statemachine.config.builders.StateMachineStateConfigu
 import org.springframework.statemachine.config.builders.StateMachineTransitionConfigurer;
 import org.springframework.statemachine.persist.DefaultStateMachinePersister;
 import org.springframework.statemachine.support.DefaultStateMachineContext;
+import org.springframework.statemachine.guard.Guard;
 
 import java.util.EnumSet;
 
@@ -111,13 +112,28 @@ public class OrderStateMachineConfig extends EnumStateMachineConfigurerAdapter<O
                 .target(OrderStatus.REFUNDED)
                 .event(OrderEvent.REFUND_SUCCESS)
 
-                // 11. 退款失败：退款中 -> 恢复原业务状态
-                // 此处以恢复到已支付为例，实际项目建议记录退款前状态
+                // 11. 退款失败：根据订单记录的 preStatus 恢复退款前状态。
+                // 同一个事件配置多个带 Guard 的目标，避免在应用服务中再维护一份状态规则。
                 .and()
                 .withExternal()
                 .source(OrderStatus.REFUNDING)
                 .target(OrderStatus.PAID)
                 .event(OrderEvent.REFUND_FAILED)
+                .guard(refundPreStatusGuard(OrderStatus.PAID))
+
+                .and()
+                .withExternal()
+                .source(OrderStatus.REFUNDING)
+                .target(OrderStatus.SHIPPED)
+                .event(OrderEvent.REFUND_FAILED)
+                .guard(refundPreStatusGuard(OrderStatus.SHIPPED))
+
+                .and()
+                .withExternal()
+                .source(OrderStatus.REFUNDING)
+                .target(OrderStatus.DELIVERED)
+                .event(OrderEvent.REFUND_FAILED)
+                .guard(refundPreStatusGuard(OrderStatus.DELIVERED))
 
                 // 12. 异常关闭：待支付 -> 异常关闭
                 .and()
@@ -136,6 +152,17 @@ public class OrderStateMachineConfig extends EnumStateMachineConfigurerAdapter<O
     }
 
     /**
+     * 退款失败时，只有退款前状态与该迁移目标一致，分支才允许执行。
+     * Order 通过事件消息头传入，避免将动态业务状态保存在共享状态机配置中。
+     */
+    private Guard<OrderStatus, OrderEvent> refundPreStatusGuard(OrderStatus expectedStatus) {
+        return context -> {
+            Object value = context.getMessageHeader("order");
+            return value instanceof Order order && order.getPreStatus() == expectedStatus;
+        };
+    }
+
+    /**
      * 状态机持久化配置。
      * 当前示例仅记录日志，并从订单对象读取状态，
      * 并未真正写入 Redis 或数据库。
@@ -148,13 +175,13 @@ public class OrderStateMachineConfig extends EnumStateMachineConfigurerAdapter<O
 
                     @Override
                     public void write(
-                            StateMachineContext<OrderStatus, OrderEvent> context, Order order) {
+                            StateMachineContext<OrderStatus, OrderEvent> context, Order order) throws Exception {
 
                         log.debug("write order status:{}", context.getState());
                     }
 
                     @Override
-                    public StateMachineContext<OrderStatus, OrderEvent> read(Order order) {
+                    public StateMachineContext<OrderStatus, OrderEvent> read(Order order) throws Exception {
 
                         return new DefaultStateMachineContext<>(
                                 order.getStatus(),

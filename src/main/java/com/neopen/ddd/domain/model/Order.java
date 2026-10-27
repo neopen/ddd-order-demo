@@ -16,6 +16,8 @@ import java.util.*;
 /**
  * 订单实体 - 聚合根
  * 表示客户的一个订单，包含多个订单项
+ *
+ * 维护状态、preStatus、金额等领域数据
  */
 @Entity
 @Table(
