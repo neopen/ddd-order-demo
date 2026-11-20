@@ -17,6 +17,8 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- 默认启动订单服务；模拟服务通过 Maven Profile 覆盖 -->
+        <start-class>com.neopen.ddd.OrderApplication</start-class>
     </properties>
 
     <dependencyManagement>
@@ -75,6 +77,12 @@
             <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
         </dependency>
 
+        <!-- Spring Boot Actuator (健康检查) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- H2 Database (示例) -->
         <dependency>
             <groupId>com.h2database</groupId>
@@ -120,6 +128,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>3.2.12</version>
                 <configuration>
+                    <mainClass>${start-class}</mainClass>
                     <excludes>
                         <exclude>
                             <groupId>org.projectlombok</groupId>
@@ -130,4 +139,19 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>mock-inventory</id>
+            <properties>
+                <start-class>com.neopen.ddd.mocks.inventory.InventoryServiceApplication</start-class>
+            </properties>
+        </profile>
+        <profile>
+            <id>mock-payment</id>
+            <properties>
+                <start-class>com.neopen.ddd.mocks.payment.PaymentServiceApplication</start-class>
+            </properties>
+        </profile>
+    </profiles>
 </project>

@@ -102,12 +102,26 @@ public class OrderStatusHistory {
     }
 
 
-    public static OrderStatusHistory of(Order order, OrderEvent event, String remark) {
+    public static OrderStatusHistory of(Order order, OrderStatus fromStatus, OrderEvent event, String remark) {
         return new OrderStatusHistory(
                 order.getId(),
-                order.getPreStatus(),
+                fromStatus,
                 order.getStatus(),
                 event,
+                order.getOperatorId(),
+                remark
+        );
+    }
+
+    /**
+     * 创建订单时的初始状态记录。
+     */
+    public static OrderStatusHistory forCreation(Order order, String remark) {
+        return new OrderStatusHistory(
+                order.getId(),
+                null,
+                order.getStatus(),
+                OrderEvent.CREATE,
                 order.getOperatorId(),
                 remark
         );

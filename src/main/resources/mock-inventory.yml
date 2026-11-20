@@ -1,0 +1,13 @@
+server:
+  port: 9001
+
+spring:
+  application:
+    name: inventory-service
+  main:
+    banner-mode: "off"
+
+logging:
+  level:
+    root: warn
+    com.neopen.ddd.mocks.inventory: info

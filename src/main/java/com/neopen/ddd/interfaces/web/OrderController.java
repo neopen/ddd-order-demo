@@ -1,104 +1,137 @@
 package com.neopen.ddd.interfaces.web;
 
 import cn.hutool.core.util.RandomUtil;
-import jakarta.validation.Valid;
-import com.neopen.ddd.application.dto.OrderCreateCommand;
+import com.neopen.ddd.application.dto.*;
 import com.neopen.ddd.application.service.OrderApplicationService;
+import com.neopen.ddd.application.service.OrderQueryService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
+/**
+ * 订单接口层：只负责协议适配、参数校验和调用应用服务。
+ */
 @RestController
 @RequestMapping("/api/orders")
+@RequiredArgsConstructor
 public class OrderController {
 
-    private final OrderApplicationService orderService;
-
-    public OrderController(OrderApplicationService orderService) {
-        this.orderService = orderService;
-    }
+    private final OrderApplicationService orderApplicationService;
+    private final OrderQueryService orderQueryService;
 
     /**
-     * 创建订单
+     * 创建订单。支持 Idempotency-Key 请求头实现接口幂等。
      */
     @PostMapping
-    public Long createOrder(@Valid @RequestBody OrderCreateCommand command) {
-        return orderService.createOrder(command);
+    public ResponseEntity<OrderCreatedResponse> createOrder(
+            @Valid @RequestBody OrderCreateCommand command,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(orderApplicationService.createOrder(command, idempotencyKey));
     }
 
+    /**
+     * 生成一个随机订单，便于快速演示。
+     */
+    @GetMapping("/demo")
+    public ResponseEntity<OrderCreatedResponse> createDemoOrder() {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(orderApplicationService.createOrder(randomCommand(), null));
+    }
+
+    /**
+     * 分页查询订单列表。
+     */
     @GetMapping
-    public Long createOrder() {
+    public PageResult<OrderSummaryView> list(@ModelAttribute OrderQuery query) {
+        return orderQueryService.list(query);
+    }
+
+    /**
+     * 查询订单详情。
+     */
+    @GetMapping("/{id}")
+    public OrderDetailView detail(@PathVariable("id") Long id) {
+        return orderQueryService.detail(id);
+    }
+
+    /**
+     * 查询订单状态流转历史。
+     */
+    @GetMapping("/{id}/history")
+    public List<OrderStatusHistoryView> history(@PathVariable("id") Long id) {
+        return orderQueryService.history(id);
+    }
+
+    @PostMapping("/{id}/pay")
+    public OrderOperationResult payOrder(
+            @PathVariable("id") Long id,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return orderApplicationService.payOrder(id, idempotencyKey);
+    }
+
+    @PostMapping("/{id}/ship")
+    public OrderOperationResult shipOrder(@PathVariable("id") Long id) {
+        return orderApplicationService.shipOrder(id);
+    }
+
+    @PostMapping("/{id}/receive")
+    public OrderOperationResult receiveOrder(@PathVariable("id") Long id) {
+        return orderApplicationService.receiveOrder(id);
+    }
+
+    @PostMapping("/{id}/cancel")
+    public OrderOperationResult cancelOrder(@PathVariable("id") Long id) {
+        return orderApplicationService.cancelOrder(id);
+    }
+
+    @PostMapping("/{id}/complete")
+    public OrderOperationResult completeOrder(@PathVariable("id") Long id) {
+        return orderApplicationService.completeOrder(id);
+    }
+
+    @PostMapping("/{id}/refund")
+    public OrderOperationResult refundOrder(@PathVariable("id") Long id) {
+        return orderApplicationService.refundOrder(id);
+    }
+
+    @PostMapping("/{id}/refund/succeeded")
+    public OrderOperationResult refundSucceeded(@PathVariable("id") Long id) {
+        return orderApplicationService.refundSucceeded(id);
+    }
+
+    @PostMapping("/{id}/refund/failed")
+    public OrderOperationResult refundFailed(@PathVariable("id") Long id) {
+        return orderApplicationService.refundFailed(id);
+    }
+
+    @PostMapping("/{id}/close")
+    public OrderOperationResult closeOrder(@PathVariable("id") Long id) {
+        return orderApplicationService.closeOrder(id);
+    }
+
+    private OrderCreateCommand randomCommand() {
         OrderCreateCommand command = new OrderCreateCommand();
         command.setCustomerId(RandomUtil.randomLong(1, 100));
-        command.setProductId(RandomUtil.randomLong(1, 100));
-        command.setProductName("Product " + RandomUtil.randomString(5));
-        command.setQuantity(RandomUtil.randomInt(1, 10));
-        command.setPrice(RandomUtil.randomBigDecimal(BigDecimal.valueOf(0.01), BigDecimal.valueOf(100)));
 
-        return orderService.createOrder(command);
-    }
-
-    /**
-     * 模拟支付
-     */
-    @GetMapping("/{id}/pay")
-    public String payOrder(@PathVariable("id") Long id) {
-        return orderService.payOrder(id);
-    }
-
-    /**
-     * 模拟发货
-     */
-    @GetMapping("/{id}/ship")
-    public String shipOrder(@PathVariable("id") Long id) {
-        return orderService.shipOrder(id);
-    }
-
-    /**
-     * 模拟收货
-     */
-    @GetMapping("/{id}/receive")
-    public String receiveOrder(@PathVariable("id") Long id) {
-        return orderService.receiveOrder(id);
-    }
-
-    /**
-     * 模拟取消
-     */
-    @GetMapping("/{id}/cancel")
-    public String cancelOrder(@PathVariable("id") Long id) {
-        return orderService.cancelOrder(id);
-    }
-
-    @GetMapping("/{id}/complete")
-    public String completeOrder(@PathVariable("id") Long id) {
-        return orderService.completeOrder(id);
-    }
-
-    @GetMapping("/{id}/refund")
-    public String refundOrder(@PathVariable("id") Long id) {
-        return orderService.refundOrder(id);
-    }
-
-    @GetMapping("/{id}/refund/succeeded")
-    public String refundSucceeded(@PathVariable("id") Long id) {
-        return orderService.refundSucceeded(id);
-    }
-
-    @GetMapping("/{id}/refund/failed")
-    public String refundFailed(@PathVariable("id") Long id) {
-        return orderService.refundFailed(id);
-    }
-
-    @GetMapping("/{id}/close")
-    public String closeOrder(@PathVariable("id") Long id) {
-        return orderService.closeOrder(id);
-    }
-
-    @GetMapping("/{id}/status")
-    public ResponseEntity<String> getOrderStatus(@PathVariable("id") Long id) {
-        // 这里可以添加获取订单状态的逻辑
-        return ResponseEntity.ok(orderService.getOrderStatus(id));
+        List<OrderItemCommand> items = new ArrayList<>();
+        int itemCount = RandomUtil.randomInt(1, 3);
+        for (int i = 0; i < itemCount; i++) {
+            OrderItemCommand item = new OrderItemCommand();
+            item.setProductId(RandomUtil.randomLong(1, 50));
+            item.setProductName("Product-" + RandomUtil.randomString(5));
+            item.setQuantity(RandomUtil.randomInt(1, 5));
+            item.setPrice(RandomUtil.randomBigDecimal(
+                    BigDecimal.valueOf(10), BigDecimal.valueOf(300)));
+            items.add(item);
+        }
+        command.setItems(items);
+        return command;
     }
 }

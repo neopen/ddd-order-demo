@@ -3,21 +3,23 @@ server:
 
 spring:
   application:
-    name: ddd-demo
+    name: ddd-order-service
   main:
     allow-bean-definition-overriding: true
-#
+
   datasource:
     url: jdbc:h2:mem:orderdb
     driver-class-name: org.h2.Driver
     username: sa
     password:
-#
+
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: create-drop
     show-sql: true
-# 使用 http://localhost:8080/h2/login.do 登录，输入：jdbc:h2:mem:orderdb
+
+  # H2 控制台：http://localhost:8080/h2 ，JDBC URL: jdbc:h2:mem:orderdb
   h2:
     console:
       enabled: true
@@ -25,9 +27,8 @@ spring:
       settings:
         trace: false
         web-allow-others: false
-#
+
   kafka:
-    # 使用EXTERNAL监听器端口（docker kafka）
     bootstrap-servers: localhost:9092
     producer:
       retries: 3
@@ -45,15 +46,16 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       enable-auto-commit: true
 
-
-  # 强制启用熔断器
   cloud:
     openfeign:
       circuitbreaker:
         enabled: true
       client:
         config:
-          inventory-service:
+          inventory-client:
+            connectTimeout: 2000
+            readTimeout: 3000
+          payment-client:
             connectTimeout: 2000
             readTimeout: 3000
 
@@ -68,14 +70,24 @@ resilience4j:
         automaticTransitionFromOpenToHalfOpenEnabled: true
         failureRateThreshold: 50
         waitDurationInOpenState: 10000
-    instances:
-      inventory-service:
-        baseConfig: default
 
+# 应用级开关
+app:
+  messaging:
+    # 未启动 Kafka 时保持 false：Outbox 照常落库，中继跳过发送并记录日志
+    kafka-enabled: false
+    order-events-topic: order-events
+    consumer-group: order-ddd-consumer
+    consumer-enabled: false
+  outbox:
+    relay-enabled: true
+    relay-interval-ms: 3000
+    max-attempts: 5
 
 logging:
   level:
-    com.hengline.ddd.infrastructure.integration.inventory: DEBUG
+    com.neopen.ddd.infrastructure.integration.inventory: DEBUG
+    com.neopen.ddd.infrastructure.messaging: INFO
     org.apache.kafka: info
     org.springframework.kafka: warn
 
@@ -83,13 +95,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,circuitbreakerevents
+        include: health,info,metrics,circuitbreakers,circuitbreakerevents
   endpoint:
     health:
       show-details: always
 
-
-# 防腐层调用的外部服务地址（模拟）
+# 防腐层调用的模拟服务地址
 inventory:
   service:
     url: http://localhost:9001
