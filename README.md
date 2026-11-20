@@ -11,6 +11,8 @@
 
 订单状态迁移由 Spring StateMachine 判断合法性，聚合根只维护迁移后的内部不变量。
 
+更系统的功能与知识文档（DDD 战术设计、Saga、事件驱动 CQRS、架构测试、运行手册）见 [docs/README.md](./docs/README.md)。
+
 ## 2. 项目结构
 
 ```text
@@ -309,7 +311,7 @@ app:
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/orders` | 创建订单，支持 `Idempotency-Key` |
-| POST | `/api/orders/demo` | 创建随机演示订单 |
+| GET | `/api/orders/demo` | 创建随机演示订单 |
 | GET | `/api/orders` | 分页查询，支持 `status`、`customerId`、`orderNum` |
 | GET | `/api/orders/{id}` | 订单详情（含订单项和支付信息） |
 | GET | `/api/orders/{id}/history` | 状态流转历史 |
