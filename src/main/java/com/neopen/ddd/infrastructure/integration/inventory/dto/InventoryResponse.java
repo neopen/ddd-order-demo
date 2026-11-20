@@ -16,18 +16,21 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class InventoryResponse {
+
     /** 是否成功，库存服务与降级实现共同遵循的判定字段。 */
     private boolean success;
 
-    /** 状态标识，如 success / fail / FAILED。 */
+    /** 状态标识，如 RESERVED / CONFIRMED / RELEASED / EXPIRED / fail。 */
     private String status;
 
     /** 描述信息，失败时用于日志与提示。 */
     private String message;
 
-    /** 附加数据，结构由库存服务定义，本服务不解析。 */
-    private Object data;
+    /** 预占单号，预占成功时返回，供订单侧后续确认或释放。 */
+    private String reservationId;
 
+    /** 附加数据，结构由库存服务定义，本服务不解析（通常是剩余库存）。 */
+    private Object data;
 
     /**
      * 按给定字段构造响应。
@@ -74,5 +77,4 @@ public class InventoryResponse {
     public static InventoryResponse fail(String message) {
         return of(false, "fail", message, null);
     }
-
 }

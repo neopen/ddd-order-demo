@@ -2,6 +2,7 @@ package com.neopen.ddd.infrastructure.messaging.outbox;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.neopen.ddd.contracts.IntegrationEvent;
 import com.neopen.ddd.domain.event.DomainEvent;
 import com.neopen.ddd.domain.event.DomainEventPublisher;
 import lombok.RequiredArgsConstructor;
@@ -58,7 +59,10 @@ public class OutboxDomainEventPublisher implements DomainEventPublisher {
         for (DomainEvent event : events) {
             String payload;
             try {
-                payload = objectMapper.writeValueAsString(event);
+                // 对外报文统一包装为集成事件信封：元数据稳定，业务载荷可独立演进。
+                IntegrationEvent envelope = IntegrationEvent.of(
+                        event, objectMapper.valueToTree(event));
+                payload = objectMapper.writeValueAsString(envelope);
             } catch (JsonProcessingException ex) {
                 // 序列化失败直接中断，让业务事务回滚，保证事件不丢失
                 throw new IllegalStateException("领域事件序列化失败: " + event.eventType(), ex);

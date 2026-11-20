@@ -1,11 +1,9 @@
 package com.neopen.ddd.application.service;
 
 import com.neopen.ddd.application.dto.*;
-import com.neopen.ddd.domain.event.DomainEventPublisher;
+import com.neopen.ddd.application.saga.OrderCreationSaga;
 import com.neopen.ddd.domain.model.*;
 import com.neopen.ddd.domain.repository.OrderRepository;
-import com.neopen.ddd.domain.repository.OrderStatusHistoryRepository;
-import com.neopen.ddd.domain.service.OrderPricingService;
 import com.neopen.ddd.domain.statemachine.OrderStateMachineService;
 import com.neopen.ddd.infrastructure.idempotency.IdempotencyService;
 import com.neopen.ddd.infrastructure.integration.inventory.acl.InventoryServiceAcl;
@@ -15,8 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -26,10 +22,10 @@ import java.util.Optional;
  * <p>事务边界：本类 public 方法均由声明式事务包裹。订单、状态历史与发件箱 (Outbox)
  * 的本地写入在同一事务内提交；库存与支付属于外部服务，不参与本地事务，
  * 只能通过“先调用、失败后反向补偿”达到最终一致。</p>
- * <p>关键协作对象：{@link OrderRepository}/{@link OrderStatusHistoryRepository}
- * 负责持久化，{@link OrderPricingService} 负责定价，{@link InventoryServiceAcl} 与
- * {@link PaymentServiceAcl} 隔离外部协议，{@link OrderStateMachineService} 执行状态迁移，
- * {@link DomainEventPublisher} 投递领域事件 (Domain Event)，{@link IdempotencyService}
+ * <p>关键协作对象：{@link OrderRepository} 负责订单持久化，
+ * {@link OrderCreationSaga} 负责创建流程的步骤编排、重试与补偿，
+ * {@link InventoryServiceAcl} 与 {@link PaymentServiceAcl} 隔离外部协议，
+ * {@link OrderStateMachineService} 执行状态迁移，{@link IdempotencyService}
  * 提供接口幂等 (Idempotency) 支持。</p>
  * <p>并发与异常：聚合使用 JPA 乐观锁，并发冲突会抛出乐观锁异常并映射为 HTTP 409；
  * 状态非法、库存不足、支付失败等以运行时异常上抛，由全局异常处理器统一转换。</p>
@@ -48,9 +44,6 @@ public class OrderApplicationService {
     /** 订单聚合仓储，保存时触发唯一约束与乐观锁 (Optimistic Lock) 校验。 */
     private final OrderRepository orderRepository;
 
-    /** 状态流转历史仓储，记录每次合法状态迁移，用于审计与排障。 */
-    private final OrderStatusHistoryRepository historyRepository;
-
     /** 库存服务防腐层 (Anti-Corruption Layer, ACL)，把外部调用结果转换为布尔值。 */
     private final InventoryServiceAcl inventoryAcl;
 
@@ -60,30 +53,21 @@ public class OrderApplicationService {
     /** 订单状态机应用服务，校验迁移合法性并负责落库历史与领域事件。 */
     private final OrderStateMachineService orderStateMachineService;
 
-    /** 定价领域服务，按可用优惠策略计算原始金额、优惠金额与应付金额。 */
-    private final OrderPricingService orderPricingService;
-
-    /** 领域事件发布端口，具体实现把事件写入发件箱 (Outbox) 后异步投递。 */
-    private final DomainEventPublisher domainEventPublisher;
+    /** 创建订单 Saga 编排器：负责定价、库存预占、持久化与失败补偿。 */
+    private final OrderCreationSaga orderCreationSaga;
 
     /** 幂等服务，按作用域与幂等键缓存首次执行结果，供重复请求回放。 */
     private final IdempotencyService idempotencyService;
 
     /**
      * 创建订单。
-     * <p>固定执行顺序：幂等检查 -> 定价 -> 预占库存 -> 保存订单/历史/Outbox。</p>
-     * <p>步骤说明：</p>
-     * <ol>
-     *   <li>幂等检查：以 {@code ORDER_CREATE} 为作用域查询幂等键，命中则直接回放首次结果；</li>
-     *   <li>定价：命令项转换为领域值对象后，交由定价领域服务选出最优优惠策略；</li>
-     *   <li>预占库存：逐项调用库存防腐层，任一项失败立即终止并进入补偿；</li>
-     *   <li>持久化：保存订单并 flush 暴露唯一约束与乐观锁冲突，写入创建历史，
-     *       再由发件箱 (Outbox) 持久化领域事件。</li>
-     * </ol>
-     * <p>补偿边界：库存预占与本地数据库不在同一事务中。try 块内任一步骤抛出运行时异常时，
-     * 仅对“已成功预占”的订单项执行反向释放，随后原样抛出异常；本地写入随事务回滚。
-     * 释放库存自身失败只会被记录，不会再次补偿或重试。生产环境还需要预占超时、对账
-     * 和 Saga 日志来覆盖进程崩溃等极端场景。</p>
+     * <p>应用服务只承担“幂等前置检查 + 委派编排”：命中幂等键时直接回放首次结果，
+     * 否则交由 {@link OrderCreationSaga} 执行定价、库存预占与持久化。</p>
+     * <p>Saga 内部固定执行顺序：定价 -> 预占库存 -> 保存订单/历史/Outbox，
+     * 任一步骤失败都会登记失败步骤、释放已创建的库存预占，并把轨迹写入 Saga 表。</p>
+     * <p>补偿边界：库存预占与本地数据库不在同一事务中，本地写入随业务事务回滚，
+     * 外部预占依靠失败后的反向释放达到最终一致；真正无法补偿的场景会体现在
+     * Saga 状态与预占单 TTL 上，供对账任务处理。</p>
      *
      * @param command        创建订单命令，包含客户标识与订单项，已通过参数校验
      * @param idempotencyKey 幂等键，来自请求头 Idempotency-Key；为空时不做幂等控制
@@ -101,46 +85,9 @@ public class OrderApplicationService {
             return replayed.get();
         }
 
-        // 命令 DTO 转为领域值对象；币种不由前端传入，统一使用默认币种。
-        List<ProductItem> items = command.getItems().stream()
-                .map(item -> ProductItem.create(
-                        item.getProductId(),
-                        item.getProductName(),
-                        item.getQuantity(),
-                        new Money(item.getPrice(), Money.DEFAULT_CURRENCY)))
-                .toList();
-
-        // 定价结果必须与订单项汇总金额一致，聚合创建时会再次校验。
-        OrderPricing pricing = orderPricingService.price(items);
-        Order order = Order.create(command.getCustomerId(), items, pricing);
-
-        List<ProductItem> reservedItems = new ArrayList<>();
-        try {
-            // 逐项预占并记录成功项，作为异常时反向补偿的唯一依据。
-            for (ProductItem item : order.getProductItems()) {
-                if (!inventoryAcl.reserveStock(item.getProductId(), item.getQuantity())) {
-                    throw new IllegalStateException(
-                            "库存不足或库存服务不可用: productId=" + item.getProductId());
-                }
-                reservedItems.add(item);
-            }
-            order.markStockReserved();
-
-            // flush 立即触发唯一约束与乐观锁校验，避免异常延迟到事务提交阶段。
-            orderRepository.saveAndFlush(order);
-            historyRepository.save(OrderStatusHistory.forCreation(order, "创建订单"));
-            // 领域事件写入发件箱 (Outbox)，与本地事务同生共死，由中继异步投递。
-            domainEventPublisher.publishAll(order.pullDomainEvents());
-
-            OrderCreatedResponse response = OrderCreatedResponse.from(order);
-            idempotencyService.record(IDEM_CREATE, idempotencyKey, response);
-            return response;
-        } catch (RuntimeException ex) {
-            // Saga 补偿：订单落库失败时释放已预占的库存。
-            reservedItems.forEach(item ->
-                    inventoryAcl.releaseStock(item.getProductId(), item.getQuantity()));
-            throw ex;
-        }
+        // 定价、库存预占、持久化与失败补偿统一由 Saga 编排器完成，
+        // 应用服务只保留用例入口与幂等前置检查，避免编排逻辑散落在多个类中。
+        return orderCreationSaga.create(command, idempotencyKey);
     }
 
     /**
@@ -190,6 +137,10 @@ public class OrderApplicationService {
         if (!orderStateMachineService.fire(orderId, OrderEvent.PAY)) {
             throw new IllegalStateException("支付失败，状态异常，订单号：" + order.getOrderNum());
         }
+
+        // 支付成功后确认库存预占：PENDING -> CONFIRMED，表示库存被真正消耗。
+        // 确认失败不回滚已完成的支付，只记录告警交由对账任务处理。
+        confirmStockReservations(order);
 
         return recordPayResult(idempotencyKey, loadOrder(orderId), "支付成功");
     }
@@ -375,19 +326,44 @@ public class OrderApplicationService {
     }
 
     /**
-     * 释放订单所有订单项的库存。失败时抛出异常，避免订单状态已变更但库存未释放。
-     * <p>释放属于外部副作用，无法参与本地事务回滚，因此失败时直接中止当前用例。</p>
+     * 释放订单所有订单项的库存预占。失败时抛出异常，避免订单状态已变更但库存未释放。
+     * <p>释放属于外部副作用，无法参与本地事务回滚，因此失败时直接中止当前用例。
+     * 预占单号为空表示该订单项没有外部预占记录（历史数据），跳过即可。</p>
      *
      * @param order 需要释放库存的订单聚合根，完成后其预占标记被清除
      * @throws IllegalStateException 任一订单项释放库存失败
      */
     private void releaseStock(Order order) {
         for (ProductItem item : order.getProductItems()) {
-            if (!inventoryAcl.releaseStock(item.getProductId(), item.getQuantity())) {
+            String reservationId = item.getReservationId();
+            if (reservationId == null || reservationId.isBlank()) {
+                continue;
+            }
+            if (!inventoryAcl.releaseStock(reservationId)) {
                 throw new IllegalStateException(
-                        "释放库存失败: productId=" + item.getProductId());
+                        "释放库存失败: reservationId=" + reservationId);
             }
         }
         order.releaseStockReservation();
+    }
+
+    /**
+     * 确认订单全部库存预占，把预占单从 PENDING 迁移为 CONFIRMED。
+     * <p>该方法在支付成功后调用，属于“尽力而为”的外部动作：确认失败不会回滚支付，
+     * 只记录告警，由库存对账任务补偿。</p>
+     *
+     * @param order 已支付订单
+     */
+    private void confirmStockReservations(Order order) {
+        for (ProductItem item : order.getProductItems()) {
+            String reservationId = item.getReservationId();
+            if (reservationId == null || reservationId.isBlank()) {
+                continue;
+            }
+            if (!inventoryAcl.confirmStock(reservationId)) {
+                log.warn("库存预占确认失败，需对账补偿: orderNum={}, reservationId={}",
+                        order.getOrderNum(), reservationId);
+            }
+        }
     }
 }

@@ -25,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -86,8 +88,10 @@ class OrderCreatePayFlowIntegrationTest {
      */
     @BeforeEach
     void setUp() {
-        when(inventoryAcl.reserveStock(anyLong(), anyInt())).thenReturn(true);
-        when(inventoryAcl.releaseStock(anyLong(), anyInt())).thenReturn(true);
+        // 预占返回稳定的预占单号，供支付确认与取消释放复用
+        when(inventoryAcl.reserveStock(anyLong(), anyInt(), anyString())).thenReturn("RSV-TEST-001");
+        when(inventoryAcl.confirmStock(anyString())).thenReturn(true);
+        when(inventoryAcl.releaseStock(anyString())).thenReturn(true);
         when(paymentServiceAcl.processPayment(any(Order.class))).thenReturn(true);
         when(paymentServiceAcl.cancelPayment(any(Order.class))).thenReturn(true);
     }
@@ -174,11 +178,26 @@ class OrderCreatePayFlowIntegrationTest {
                 .andReturn();
         assertNotNull(historyResult.getResponse().getContentAsString());
 
-        // 7. 外部协作验证：库存预占一次，支付使用应付金额
-        verify(inventoryAcl).reserveStock(11L, 1);
+        // 7. 外部协作验证：库存预占一次、支付确认恰好一次
+        verify(inventoryAcl).reserveStock(eq(11L), eq(1), anyString());
+        verify(inventoryAcl).confirmStock("RSV-TEST-001");
         verify(paymentServiceAcl).processPayment(any(Order.class));
 
-        // 8. Outbox 中至少包含订单创建与状态变更两类事件
+        // 8. 读模型：事件驱动投影已同步更新为 PAID
+        mockMvc.perform(get("/api/read-models/orders/{orderNum}", orderNum))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PAID"))
+                .andExpect(jsonPath("$.payableAmount").value(90.0));
+
+        // 9. Saga 轨迹：创建流程已完成，三个步骤全部成功
+        mockMvc.perform(get("/api/orders/{id}/saga", orderId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.steps.length()").value(3))
+                .andExpect(jsonPath("$.steps[0].stepName").value("PRICE"))
+                .andExpect(jsonPath("$.steps[2].status").value("SUCCEEDED"));
+
+        // 10. Outbox 中至少包含订单创建与状态变更两类事件
         List<OutboxEvent> events = outboxEventRepository.findAll();
         assertTrue(events.size() >= 2);
         assertTrue(events.stream().anyMatch(e -> e.getEventType().equals("OrderCreatedEvent")));

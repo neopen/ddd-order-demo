@@ -4,6 +4,7 @@ import cn.hutool.core.util.RandomUtil;
 import com.neopen.ddd.application.dto.*;
 import com.neopen.ddd.application.service.OrderApplicationService;
 import com.neopen.ddd.application.service.OrderQueryService;
+import com.neopen.ddd.application.saga.SagaQueryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -24,6 +25,7 @@ public class OrderController {
 
     private final OrderApplicationService orderApplicationService;
     private final OrderQueryService orderQueryService;
+    private final SagaQueryService sagaQueryService;
 
     /**
      * 创建订单。支持 Idempotency-Key 请求头实现接口幂等。
@@ -67,6 +69,14 @@ public class OrderController {
     @GetMapping("/{id}/history")
     public List<OrderStatusHistoryView> history(@PathVariable("id") Long id) {
         return orderQueryService.history(id);
+    }
+
+    /**
+     * 查询订单创建 Saga 的执行轨迹（步骤、尝试次数与补偿结果）。
+     */
+    @GetMapping("/{id}/saga")
+    public SagaDetailView saga(@PathVariable("id") Long id) {
+        return sagaQueryService.findByOrderId(id);
     }
 
     @PostMapping("/{id}/pay")

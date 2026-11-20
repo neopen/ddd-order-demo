@@ -1,6 +1,7 @@
 package com.neopen.ddd.domain.event;
 
 import java.io.Serializable;
+import java.time.Instant;
 
 /**
  * 领域事件 (Domain Event) 的顶层契约。
@@ -38,6 +39,28 @@ public interface DomainEvent extends Serializable {
      */
     default String eventType() {
         return getClass().getSimpleName();
+    }
+
+    /**
+     * 事件契约版本号，默认 {@code 1}。
+     * <p>跨服务发布时写入集成事件信封，消费端可据此兼容多版本事件；
+     * 字段含义发生不兼容变化时递增，而不是直接修改已发布的历史版本。</p>
+     *
+     * @return 事件版本号，从 1 开始
+     */
+    default int version() {
+        return 1;
+    }
+
+    /**
+     * 事件发生时间。
+     * <p>实现类通常以 {@code occurredAt} 字段承载该值；默认方法保证集成事件信封
+     * 总能取得时间戳，用于消费端排序与延迟度量。</p>
+     *
+     * @return 事件发生时间
+     */
+    default Instant occurredAt() {
+        return Instant.now();
     }
 
     /**

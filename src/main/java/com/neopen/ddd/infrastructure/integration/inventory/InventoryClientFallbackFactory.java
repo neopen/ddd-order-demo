@@ -50,15 +50,45 @@ public class InventoryClientFallbackFactory implements FallbackFactory<Inventory
             }
 
             /**
-             * 释放库存的降级实现，返回失败结果以便补偿任务后续重试。
+             * 确认预占的降级实现，返回失败结果以便对账或重试。
              *
-             * @param request 原始释放请求
-             * @return success=false 的响应，message 中携带失败原因
+             * @param reservationId 预占单号
+             * @return success=false 的响应
              */
             @Override
-            public InventoryResponse release(InventoryRequestDTO request) {
-                log.error("库存释放降级，productId: {}, quantity: {}",
-                        request.getProductId(), request.getQuantity());
+            public InventoryResponse confirm(String reservationId) {
+                log.error("库存确认降级，reservationId: {}", reservationId);
+                return InventoryResponse.builder()
+                        .success(false)
+                        .message("库存服务暂时不可用: " + cause.getMessage())
+                        .status("FAILED")
+                        .build();
+            }
+
+            /**
+             * 释放预占的降级实现，返回失败结果以便补偿任务后续重试。
+             *
+             * @param reservationId 预占单号
+             * @return success=false 的响应
+             */
+            @Override
+            public InventoryResponse release(String reservationId) {
+                log.error("库存释放降级，reservationId: {}", reservationId);
+                return InventoryResponse.builder()
+                        .success(false)
+                        .message("库存服务暂时不可用: " + cause.getMessage())
+                        .status("FAILED")
+                        .build();
+            }
+
+            /**
+             * 库存查询的降级实现。
+             *
+             * @param productId 商品标识
+             * @return success=false 的响应
+             */
+            @Override
+            public InventoryResponse stock(Long productId) {
                 return InventoryResponse.builder()
                         .success(false)
                         .message("库存服务暂时不可用: " + cause.getMessage())

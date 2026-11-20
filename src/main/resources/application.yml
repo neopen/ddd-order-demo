@@ -83,6 +83,17 @@ app:
     relay-enabled: true
     relay-interval-ms: 3000
     max-attempts: 5
+  # 库存预占有效期：到期未确认的预占由库存服务自动回收
+  inventory:
+    reservation-ttl-seconds: 900
+  # Saga 编排：失败重试、超时看门狗与故障注入
+  saga:
+    reserve-max-attempts: 2
+    timeout-enabled: true
+    timeout-seconds: 300
+    timeout-scan-interval-ms: 60000
+    # 指定步骤名可注入故障（如 PERSIST_ORDER），用于演示/测试补偿链路；留空表示关闭
+    fault-step: ""
 
 logging:
   level:

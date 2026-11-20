@@ -2,21 +2,31 @@ package com.neopen.ddd.mocks.inventory;
 
 import com.neopen.ddd.infrastructure.integration.inventory.dto.InventoryRequestDTO;
 import com.neopen.ddd.infrastructure.integration.inventory.dto.InventoryResponse;
+import com.neopen.ddd.mocks.inventory.domain.StockReservation;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 内存库存服务 (In-Memory Inventory Service)：模拟运行在端口 9001 的独立库存微服务，
- * 提供库存预占、释放与查询能力，供订单服务的库存防腐层 (ACL) 通过 HTTP 调用。
- * <p>数据结构：以商品 ID 为键、原子整数 (AtomicInteger) 为值的并发映射保存库存，
- * 商品首次被访问时惰性初始化为 {@link #INITIAL_STOCK} 件。</p>
- * <p>线程安全：映射使用 {@link ConcurrentHashMap}，预占通过 CAS
- * (Compare-And-Swap) 循环更新，避免并发下超卖；释放使用原子加法，不引入全局锁。</p>
- * <p>状态易失：库存只存在于进程内存，重启后恢复初始值，仅用于联调与教学演示。</p>
+ * 内存库存服务 (In-Memory Inventory Service)：模拟运行在端口 9001 的独立库存微服务。
+ *
+ * <p>核心模型：库存扣减不再是一次性永久扣减，而是生成带 TTL 的预占单
+ * {@link StockReservation}。预占单生命周期为
+ * {@code PENDING -> CONFIRMED / RELEASED / EXPIRED}，对应“支付确认、订单取消、超时回收”
+ * 三种业务结局，从而避免订单服务崩溃时库存被永久占用。</p>
+ *
+ * <p>数据结构：商品剩余库存用 {@link AtomicInteger} 保存，预占单保存于
+ * {@link ConcurrentHashMap}；预占扣减使用 CAS 循环，避免并发超卖。</p>
+ *
+ * <p>定时任务：每 5 秒扫描一次到期的 PENDING 预占单，迁移为 EXPIRED 并归还库存；
+ * 这正是“库存 Reservation 聚合 + TTL”在微服务中的落地方式。</p>
+ *
+ * <p>状态易失：库存与预占仅存在于进程内存，重启后恢复初始值，仅用于联调与教学演示。</p>
  */
 @RestController
 @RequestMapping("/api/inventory")
@@ -26,22 +36,30 @@ public class InventoryMockController {
     /** 每个商品的初始库存数量，商品首次被访问时按此值创建计数器。 */
     private static final int INITIAL_STOCK = 1000;
 
+    /** 预占有效期默认值（秒），请求未显式指定时使用。 */
+    private static final int DEFAULT_TTL_SECONDS = 900;
+
     /** 商品库存表：键为商品 ID，值为剩余库存的原子计数器，支持并发读写。 */
     private final Map<Long, AtomicInteger> stocks = new ConcurrentHashMap<>();
 
+    /** 预占单表：键为预占单号，值为预占聚合，模拟库存上下文中的聚合存储。 */
+    private final Map<String, StockReservation> reservations = new ConcurrentHashMap<>();
+
     /**
-     * 预占库存：校验请求后以 CAS 循环扣减可用库存。
-     * <p>业务规则：库存不足或参数非法时返回失败结果而不抛异常，由调用方决定是否补偿；
-     * CAS 失败说明期间有其他请求并发修改库存，重新读取后重试，因此不会超卖。</p>
+     * 创建库存预占单：先 CAS 扣减可售库存，再生成 PENDING 预占单。
+     * <p>两步都在同一个内存操作序列中完成，演示场景不做事务；库存不足或参数非法时
+     * 返回失败结果而不抛异常，由订单侧决定是否补偿。</p>
      *
-     * @param request 预占请求，包含商品 ID 与数量
-     * @return 预占结果，成功时携带剩余库存，失败时携带失败原因
+     * @param request 预占请求，包含商品、数量、订单号与可选 TTL
+     * @return 预占结果，成功时携带预占单号与剩余库存
      */
-    @PostMapping("/reserve")
+    @PostMapping("/reservations")
     public InventoryResponse reserve(@RequestBody InventoryRequestDTO request) {
-        // 校验：非法请求直接以失败结果返回，不进入库存计算
         if (request == null || request.getProductId() == null || request.getQuantity() <= 0) {
             return InventoryResponse.fail("商品ID或数量非法");
+        }
+        if (request.getOrderNum() == null || request.getOrderNum().isBlank()) {
+            return InventoryResponse.fail("订单号不能为空");
         }
 
         AtomicInteger stock = stockOf(request.getProductId());
@@ -54,34 +72,86 @@ public class InventoryMockController {
                 return InventoryResponse.fail("库存不足，剩余 " + available);
             }
             if (stock.compareAndSet(available, available - request.getQuantity())) {
-                log.info("库存预占成功: productId={}, quantity={}, remaining={}",
-                        request.getProductId(), request.getQuantity(),
+                int ttl = request.getTtlSeconds() == null || request.getTtlSeconds() <= 0
+                        ? DEFAULT_TTL_SECONDS : request.getTtlSeconds();
+                StockReservation reservation = StockReservation.create(
+                        request.getProductId(), request.getQuantity(), request.getOrderNum(), ttl);
+                reservations.put(reservation.getId(), reservation);
+                log.info("库存预占成功: reservationId={}, productId={}, quantity={}, remaining={}",
+                        reservation.getId(), request.getProductId(), request.getQuantity(),
                         available - request.getQuantity());
-                return InventoryResponse.of(
-                        true, "RESERVED", "库存预占成功", available - request.getQuantity());
+                return InventoryResponse.builder()
+                        .success(true)
+                        .status(reservation.getStatus().name())
+                        .message("库存预占成功")
+                        .reservationId(reservation.getId())
+                        .data(available - request.getQuantity())
+                        .build();
             }
         }
     }
 
     /**
-     * 释放库存：把指定数量原子地加回到商品库存。
-     * <p>用于订单取消或创建失败后的反向补偿。接口不做上限校验，重复释放会使库存虚增，
-     * 因此调用方应依赖订单的预占标记保证只释放一次（演示场景的简化处理）。</p>
+     * 确认预占：PENDING -> CONFIRMED，表示订单已支付、库存被真正消耗。
      *
-     * @param request 释放请求，包含商品 ID 与数量
-     * @return 释放结果，成功时携带释放后的库存
+     * @param reservationId 预占单号
+     * @return 确认结果，状态为 CONFIRMED
      */
-    @PostMapping("/release")
-    public InventoryResponse release(@RequestBody InventoryRequestDTO request) {
-        if (request == null || request.getProductId() == null || request.getQuantity() <= 0) {
-            return InventoryResponse.fail("商品ID或数量非法");
+    @PostMapping("/reservations/{reservationId}/confirm")
+    public InventoryResponse confirm(@PathVariable("reservationId") String reservationId) {
+        StockReservation reservation = reservations.get(reservationId);
+        if (reservation == null) {
+            return InventoryResponse.fail("预占单不存在: " + reservationId);
         }
+        try {
+            reservation.confirm();
+            log.info("库存预占已确认: reservationId={}, orderNum={}",
+                    reservationId, reservation.getOrderNum());
+            return reservationResponse(reservation, "库存预占已确认");
+        } catch (IllegalStateException ex) {
+            return InventoryResponse.fail(ex.getMessage());
+        }
+    }
 
-        int remaining = stockOf(request.getProductId())
-                .addAndGet(request.getQuantity());
-        log.info("库存释放成功: productId={}, quantity={}, remaining={}",
-                request.getProductId(), request.getQuantity(), remaining);
-        return InventoryResponse.of(true, "RELEASED", "库存释放成功", remaining);
+    /**
+     * 释放预占：PENDING -> RELEASED，并把库存归还到可售池。
+     * <p>重复释放是幂等的：已释放或已过期的预占单不会再次归还库存，
+     * 便于订单侧的补偿逻辑安全重试。</p>
+     *
+     * @param reservationId 预占单号
+     * @return 释放结果，状态为 RELEASED
+     */
+    @PostMapping("/reservations/{reservationId}/release")
+    public InventoryResponse release(@PathVariable("reservationId") String reservationId) {
+        StockReservation reservation = reservations.get(reservationId);
+        if (reservation == null) {
+            return InventoryResponse.fail("预占单不存在: " + reservationId);
+        }
+        try {
+            if (reservation.release()) {
+                stockOf(reservation.getProductId()).addAndGet(reservation.getQuantity());
+                log.info("库存预占已释放: reservationId={}, quantity={}",
+                        reservationId, reservation.getQuantity());
+            }
+            return reservationResponse(reservation, "库存预占已释放");
+        } catch (IllegalStateException ex) {
+            return InventoryResponse.fail(ex.getMessage());
+        }
+    }
+
+    /**
+     * 查询预占单详情，便于联调时观察状态机迁移结果。
+     *
+     * @param reservationId 预占单号
+     * @return 预占单快照；不存在时返回失败结果
+     */
+    @GetMapping("/reservations/{reservationId}")
+    public InventoryResponse queryReservation(@PathVariable("reservationId") String reservationId) {
+        StockReservation reservation = reservations.get(reservationId);
+        if (reservation == null) {
+            return InventoryResponse.fail("预占单不存在: " + reservationId);
+        }
+        return reservationResponse(reservation, "查询成功");
     }
 
     /**
@@ -95,6 +165,39 @@ public class InventoryMockController {
     public InventoryResponse query(@PathVariable("productId") Long productId) {
         return InventoryResponse.of(
                 true, "OK", "查询成功", stockOf(productId).get());
+    }
+
+    /**
+     * 定时回收到期预占：PENDING 且超过 expiresAt 的预占单迁移为 EXPIRED 并归还库存。
+     * <p>这是跨服务场景下处理“订单创建后进程崩溃、预占无人确认”的兜底手段。</p>
+     */
+    @Scheduled(fixedDelay = 5000)
+    public void expireReservations() {
+        LocalDateTime now = LocalDateTime.now();
+        for (StockReservation reservation : reservations.values()) {
+            if (reservation.expireIfDue(now)) {
+                stockOf(reservation.getProductId()).addAndGet(reservation.getQuantity());
+                log.info("库存预占已过期并回收: reservationId={}, productId={}, quantity={}",
+                        reservation.getId(), reservation.getProductId(), reservation.getQuantity());
+            }
+        }
+    }
+
+    /**
+     * 把预占聚合转换为响应 DTO。
+     *
+     * @param reservation 预占聚合
+     * @param message     提示信息
+     * @return 包含预占单号与状态的响应
+     */
+    private InventoryResponse reservationResponse(StockReservation reservation, String message) {
+        return InventoryResponse.builder()
+                .success(true)
+                .status(reservation.getStatus().name())
+                .message(message)
+                .reservationId(reservation.getId())
+                .data(reservation.getExpiresAt())
+                .build();
     }
 
     /**

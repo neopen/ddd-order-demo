@@ -81,6 +81,25 @@ public class ProductItem {
     private Order order;
 
     /**
+     * 库存预占单号 (Reservation ID)，由库存服务在预占成功时返回。
+     * <p>订单只保存库存上下文中的标识，不持有库存对象，体现跨上下文按 ID 引用；
+     * 支付时据此确认预占，取消时据此释放预占。为空表示该订单项没有外部预占记录，
+     * 通常出现在历史数据或库存服务未启用新接口的场景。</p>
+     */
+    @Column(name = "reservation_id", length = 64)
+    private String reservationId;
+
+    /**
+     * 记录库存服务返回的预占单号，供后续确认或释放使用。
+     * <p>该方法只维护数据快照，不改变订单状态；重复写入同一预占单号是幂等的。</p>
+     *
+     * @param reservationId 预占单号，允许为空（表示无外部预占记录）
+     */
+    public void assignReservation(String reservationId) {
+        this.reservationId = reservationId;
+    }
+
+    /**
      * 工厂方法：创建订单项并计算小计。
      *
      * @param productId   商品 ID，不能为空

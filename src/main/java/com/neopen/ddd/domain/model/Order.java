@@ -1,6 +1,5 @@
 package com.neopen.ddd.domain.model;
 
-import cn.hutool.core.util.RandomUtil;
 import com.neopen.ddd.domain.event.OrderCreatedEvent;
 import com.neopen.ddd.domain.event.OrderStatusChangedEvent;
 import jakarta.persistence.*;
@@ -10,6 +9,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 订单实体，同时是订单聚合 (Aggregate) 的聚合根 (Aggregate Root)。
@@ -218,7 +218,8 @@ public class Order extends AggregateRoot {
         order.status = OrderStatus.CREATED;
         order.createdAt = LocalDateTime.now();
         order.updatedAt = order.createdAt;
-        order.operatorId = RandomUtil.randomLong();
+        // 领域层不引入第三方工具库，操作人先用 JDK 随机数占位。
+        order.operatorId = ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE);
 
         for (ProductItem item : items) {
             Objects.requireNonNull(item, "订单项不能为空");
@@ -431,7 +432,8 @@ public class Order extends AggregateRoot {
         touch();
 
         if (event != null && this.id != null) {
-            registerEvent(new OrderStatusChangedEvent(this.id, from, target, event));
+            // 事件同时携带订单主键与订单号：主键供写侧定位聚合，订单号供读模型投影使用。
+            registerEvent(new OrderStatusChangedEvent(this.id, this.orderNum, from, target, event));
         }
     }
 

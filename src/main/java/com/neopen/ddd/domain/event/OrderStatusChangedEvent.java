@@ -14,6 +14,7 @@ import java.util.UUID;
  * <p>字段语义：</p>
  * <ul>
  *   <li>{@code orderId}：订单主键，同时作为聚合标识，保证同一订单的事件有序消费。</li>
+ *   <li>{@code orderNum}：业务订单号，供跨服务的读模型投影使用，避免消费端再回查写库。</li>
  *   <li>{@code from}/{@code to}：迁移前后的状态，两者构成状态机 (State Machine) 的一条合法边。</li>
  *   <li>{@code event}：触发本次迁移的领域动作（如支付、发货），便于消费端区分变更原因。</li>
  *   <li>{@code occurredAt}：事件发生时刻，用于排序、延迟度量与审计追溯。</li>
@@ -22,6 +23,7 @@ import java.util.UUID;
  */
 public record OrderStatusChangedEvent(
         Long orderId,
+        String orderNum,
         OrderStatus from,
         OrderStatus to,
         OrderEvent event,
@@ -33,13 +35,15 @@ public record OrderStatusChangedEvent(
      * <p>由聚合内部调用，保证每次状态迁移只产生一个稳定的事件 ID，
      * 避免重试时生成新 ID 导致消费端重复处理。</p>
      *
-     * @param orderId 订单主键
-     * @param from    迁移前状态
-     * @param to      迁移后状态
-     * @param event   触发迁移的领域动作
+     * @param orderId  订单主键
+     * @param orderNum 业务订单号
+     * @param from     迁移前状态
+     * @param to       迁移后状态
+     * @param event    触发迁移的领域动作
      */
-    public OrderStatusChangedEvent(Long orderId, OrderStatus from, OrderStatus to, OrderEvent event) {
-        this(orderId, from, to, event, Instant.now(), UUID.randomUUID().toString());
+    public OrderStatusChangedEvent(Long orderId, String orderNum,
+                                   OrderStatus from, OrderStatus to, OrderEvent event) {
+        this(orderId, orderNum, from, to, event, Instant.now(), UUID.randomUUID().toString());
     }
 
     /**
